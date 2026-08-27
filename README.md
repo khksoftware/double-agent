@@ -1,39 +1,44 @@
 # Double Agent
 
-**Read what your platform already recorded about your delegated agents, instead of keeping a
-worse ledger beside it.**
+<p>
+  <img src="assets/double-agent.png" alt="Double Agent mascot: a single figure split down the middle, wearing a black top hat and overcoat on one side and a yellow hard hat and work jacket on the other, in dark sunglasses" width="180" align="left">
+  Double Agent is a Python library for supervising delegated AI agents. When one agent dispatches others, somebody has to answer plain questions about them: which are still running, what each was asked to do, who is allowed to cancel whom, and what became of the ones that stopped. Double Agent answers those questions from the records the platform itself already keeps, rather than from a second registry maintained by hand alongside it.
+</p>
 
-Most systems that manage delegated agents keep a hand-maintained registry — a list of who is
-running, what they were asked to do, when they started. The platform underneath is already
-writing all of that, and more, for the same agents at the same instants.
+<br clear="left">
+
+**Why that distinction is the whole point.** Most systems for supervising delegated agents
+keep exactly that kind of registry by hand, updated alongside the platform. The trouble is
+that the platform underneath is already recording the same facts — and more — for the same
+agents, at the same instants.
 
 The hand-kept copy is lossy in ways that are invisible from inside it:
 
-- **It is pruned when an agent stops**, so it is a live-only roster and cannot answer a
-  single question about what happened.
-- **Its writes are often unlocked**, so parallel dispatches drop each other's entries.
-- **Its fields hold what the first available value happened to be**, not what they are named
-  for.
+- **Pruned** when an agent stops — a live-only roster that cannot answer a single question
+  about what already happened.
+- **Unlocked**, often, in its writes — so parallel dispatches drop each other's entries.
+- **First-available, not first-correct** — a field ends up holding whatever value showed up
+  first, not what its name promises.
 
 The consequence is the one that matters: **an absent entry in such a registry proves
 nothing**, and a registry that cannot be absent-checked cannot answer "is this agent still
 running?" — which is the only question anyone asks it.
 
-So Double Agent is **not a new source of truth. It is a reader, a projection, and a small set
-of actions at the only boundaries where action is possible.**
+So Double Agent is **not a new source of truth** — it is a reader, a projection, and a small
+set of actions at the only boundaries where action is possible.
 
 ## What it gives you
 
 | | |
 | --- | --- |
-| **A lineage tree** | nodes with an id, a parent, a depth, a dispatch instant, a last-activity instant, and a terminal disposition drawn from a closed set |
-| **An activity clock** | age since last *evidenced* activity, compared against one inactivity regime and never a second one |
-| **A disposition classifier** | a small closed set of states, with the two that are usually conflated kept apart |
-| **A dispatch envelope** | the assigned outcome, a durable cursor, checkpoints, a heartbeat, a role label, a declared external wait, and where this dispatch's control records resolve |
-| **A conformance predicate** | over what an agent emitted, carrying its own **measured** false-positive rate |
-| **A signal protocol** | five named shapes — `cancel`, `suspend`, `override`, `hazard`, and `status`, which is a **read** rather than a message and cannot be constructed as one — with a stated authority order |
+| **A lineage tree** | every dispatched agent as a node, each with an id, a parent, a depth, when it started, when it last did anything, and a final outcome drawn from a closed set |
+| **An activity clock** | how long since an agent's last *evidenced* activity, measured against one inactivity threshold — never two competing ones |
+| **A disposition classifier** | a small, closed set of terminal states, including two that most systems blur into one |
+| **A dispatch envelope** | everything tracked about one dispatch: its outcome so far, a durable cursor and checkpoints for resuming it safely, a heartbeat, a role label, whether it has declared itself waiting on something external, and where its control records actually live |
+| **A conformance predicate** | a check over what an agent actually emitted, carrying its own measured false-positive rate |
+| **A signal protocol** | five named signals — `cancel`, `suspend`, `override`, `hazard`, `status` — with a stated authority order |
 | **An entitlement rule** | who may signal whom, and the one condition under which that authority transfers |
-| **A registry reconciliation** | against the platform's own registry, where it keeps one |
+| **A registry reconciliation** | a check against the platform's own registry, on any platform that keeps one |
 
 ## The two ideas worth reading before the API
 
@@ -49,16 +54,21 @@ A gap gets investigated; a confident wrong answer does not.
 
 ### Authority is structural, not declared
 
-**No actor acquires authority over a node it does not already dominate in the platform's own
-tree by writing a record.** You may signal a node you dispatched. You may signal a node you
-adopted, and adoption is the only thing that transfers ownership. An ancestor may spend a
-recorded reach on a single signal, which transfers nothing.
+No actor gains authority over a node by writing a record — only by already sitting above it
+in the platform's own tree. You may signal a node you dispatched yourself. You may signal a
+node you have adopted, and adoption is the only act that actually transfers ownership. An
+ancestor further up the tree may still reach down and send a single signal, but that reach is
+spent on the signal itself; it transfers nothing.
 
-And the transfer condition is deliberately hard: **entitlement transfers only where the party
-taking it can prove the prior owner can no longer write** — by direct reading, by the
-platform's own authoritative record of write capability, or, where the platform exposes
-neither and every writer inside the named boundary is a governed role, by a durable
-salvageable checkpoint the prior owner wrote and the taking party validated and adopted.
+And the transfer condition is deliberately hard. **Entitlement transfers only when the party
+taking it over can prove the prior owner can no longer write** — and that proof must take one
+of three forms:
+
+- reading the prior owner's write capability directly,
+- consulting the platform's own authoritative record of that capability, or
+- where the platform exposes neither, and every writer inside the named boundary is a
+  governed role, taking over a durable, salvageable checkpoint that the prior owner wrote
+  and that the taking party has validated and adopted.
 
 A record that the prior owner *stopped* is none of those three. An elapsed inactivity
 threshold is not either — no platform reads it and every platform computes it. A platform
@@ -66,18 +76,20 @@ supplying none of the three supplies no transfer, and the step blocks.
 
 ## Signals, and the honest half of the signal protocol
 
-A signal is only as strong as what the transport records about who sent it.
+A signal is only as strong as what the transport records about who sent it. (`status` is the
+one exception: it is a read, not a message, so there is nothing sent and nothing to spoof.)
 
-> The transport must record, on the **recipient's** side, a sender identity the sender does
+> The transport must record, on the recipient's side, a sender identity the sender does
 > not control. Where it does not, the signal is **advisory**.
 
 And the consequence, which matters more than the condition:
 
-> An advisory signal's non-compliance produces an **obstacle report**. Only an adjudicable
-> signal's non-compliance may be attributed to the recipient as **defiance**.
+> An advisory signal's non-compliance produces an obstacle report. Only a signal that meets
+> that condition — call it **adjudicable** — can have its non-compliance attributed to the
+> recipient as **defiance**.
 
 On some platforms every signal to a running actor is advisory. Such a platform gets the whole
-protocol and **no hazard producer at all** — which is the correct outcome, stated rather than
+protocol and no hazard producer at all — which is the correct outcome, stated rather than
 worked around.
 
 ## Porting it
@@ -91,7 +103,7 @@ answer. That is the intended failure direction.
 
 The port surface is `double_agent.ports.Platform` and `double_agent.ports.Capabilities`; the
 reading side is `double_agent.reconciliation.reconcile`. Neither has a separate usage guide
-yet -- read the module docstrings, which are load-bearing rather than illustrative.
+yet — read the module docstrings, which are load-bearing rather than illustrative.
 
 ## Status
 
