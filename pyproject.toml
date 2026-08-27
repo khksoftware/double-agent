@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The ONE place the distribution (index-facing) name is declared, deliberately kept out of
+# every other file so it stays trivially changeable. The import package is `double_agent`
+# regardless of what this name ends up being; only this field would need to change if the
+# name below turns out to be taken on a public index.
+name = "double-agent"
+dynamic = ["version"]
+description = "Double Agent -- read what the platform already recorded about your delegated agents, instead of keeping a worse ledger beside it."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[tool.setuptools.dynamic]
+version = { attr = "double_agent.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# No [tool.setuptools.package-data] here: no envelope or signal-record JSON schema exists
+# in this package. A prior `double_agent = ["schemas/*.json"]` entry declared a directory
+# that was never tracked and matched nothing; this file is not the place to assert a schema
+# exists that does not.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
