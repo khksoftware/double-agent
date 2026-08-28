@@ -108,7 +108,7 @@ yet — read the module docstrings, which are load-bearing rather than illustrat
 ## Status
 
 **Early.** The interfaces are settled and the implementation is landing module by module.
-Version is `0.1.1` and the package is not yet published to an index.
+Version is `0.1.2` and the package is not yet published to an index.
 
 ## Licence
 
