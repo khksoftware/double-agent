@@ -123,6 +123,45 @@ class TestLegOneIsStructural:
         assert "recorded no parent" in result.basis
 
 
+class TestTheSessionHandleClosesTheParentlessSeamWithoutWideningAuthority:
+    """A top-level dispatch has no recorded parent on every platform observed, so leg 1
+    refused the one party that certainly dispatched it. `reconcile` already resolved that
+    same absence with a `session_handle` for ownership; this closes the asymmetry for
+    command -- and admits the leg as NON-authoritative, because a session handle is an
+    assertion by the party asking, not a link the platform wrote at spawn."""
+
+    def test_the_asserting_session_is_entitled_but_not_authoritatively(self):
+        ledger = tree(("top", None))
+        result = entitled_to_command(
+            ledger, party_id="session-a", node_id="top", session_handle="session-a")
+        assert result.entitled
+        assert result.leg is Leg.DISPATCHER
+        assert not result.authoritative, "a caller assertion must never read as structural"
+        assert "session handle is supplied by the party asking" in result.basis
+
+    def test_a_different_session_gains_nothing_from_the_handle(self):
+        ledger = tree(("top", None))
+        result = entitled_to_command(
+            ledger, party_id="stranger", node_id="top", session_handle="session-a")
+        assert not result.entitled
+
+    def test_an_empty_handle_leaves_the_previous_behaviour_exactly_as_it_was(self):
+        ledger = tree(("top", None))
+        for handle in ("", None):
+            result = entitled_to_command(
+                ledger, party_id="anyone", node_id="top", session_handle=handle or "")
+            assert not result.entitled
+            assert "recorded no parent" in result.basis
+
+    def test_it_cannot_reach_a_node_that_does_have_a_recorded_parent(self):
+        """The handle answers the PARENTLESS case only. A node with a real parent link is
+        adjudicated by that link, so asserting a session handle must not override it."""
+        ledger = tree(("p", None), ("c", "p"))
+        result = entitled_to_command(
+            ledger, party_id="session-a", node_id="c", session_handle="session-a")
+        assert not result.entitled
+
+
 class TestTheTransferGateRefusesEveryRecordOfStopping:
     """The heart of the module. A parent that stopped is not a parent that cannot write."""
 

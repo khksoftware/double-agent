@@ -310,6 +310,7 @@ def entitled_to_command(
     signal_shape: Optional[SignalShape] = None,
     assessments: Mapping[str, Assessment] = {},
     resolves: Optional[Callable[[str], bool]] = None,
+    session_handle: str = "",
 ) -> Entitlement:
     """Decide whether ``party_id`` may command ``node_id``, and say on which leg.
 
@@ -331,6 +332,15 @@ def entitled_to_command(
     either does not widen leg 2 -- both fail it closed**, the same direction
     :func:`evaluate_transfer_gate` already fails an unchecked resolver: "I could not check"
     must never read the same as "I checked and it was fine".
+
+    ``session_handle`` names the top-level actor, for the case the platform records no parent
+    at all -- which is every top-level dispatch on every platform observed.
+    :func:`reconciliation.reconcile` already resolves that same absence this way for
+    *ownership*, and until 2026-08-28 this function did not, so the two answered one
+    structural question two ways. **Leg 1 now holds for a caller asserting it is that session,
+    and is reported NON-AUTHORITATIVE**: a recorded parent link is written by the platform at
+    spawn and cannot be forged, a session handle is supplied by the party asking. Omitting it
+    changes nothing -- the leg simply does not hold, exactly as before.
 
     The legs are tried in authority order and the first that holds is returned, so an adopted
     node's own dispatcher is still reported on leg 1 where the platform's record still says so.
@@ -357,6 +367,35 @@ def entitled_to_command(
             "all -- its dispatcher is the sessionless top-level actor, which has no identity "
             "to compare against"
         )
+        # A top-level dispatch has no recorded parent on every platform observed, so without
+        # this branch leg 1 refuses the ONE party that certainly did dispatch it: the session
+        # itself. `reconciliation.reconcile` already resolves the identical absence with a
+        # `session_handle`, so the two functions answered the same structural question
+        # differently -- ownership attributed, command refused.
+        #
+        # **It is admitted as NON-AUTHORITATIVE, and that distinction is the whole of the
+        # safety here.** A recorded `parent_id` is written by the platform at spawn and no
+        # party can forge it. A `session_handle` is a caller ASSERTION about which session it
+        # is running in, and this module's governing sentence is that no actor acquires
+        # authority over a node by writing a record. So the leg holds -- a caller asking about
+        # itself, for a node the platform placed at the top level, is asking a real question
+        # -- while `authoritative` stays False, which is how every consumer can tell this from
+        # a parent link it could have trusted without qualification.
+        if session_handle and session_handle == party_id:
+            return Entitlement(
+                entitled=True,
+                party_id=party_id,
+                node_id=node_id,
+                leg=Leg.DISPATCHER,
+                authoritative=False,
+                basis=(
+                    f"the platform recorded no parent for this node, and the caller asserts it "
+                    f"is the top-level session {session_handle!r} that dispatched it. Leg 1 "
+                    f"holds on that assertion and is reported NON-AUTHORITATIVE: unlike a "
+                    f"recorded parent link, a session handle is supplied by the party asking, "
+                    f"not written by the platform at spawn."
+                ),
+            )
     else:
         structural_note = f"the platform recorded {node.parent_id!r} as this node's dispatcher"
         if node.parent_id == party_id:
