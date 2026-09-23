@@ -11,6 +11,7 @@ from double_agent.envelope import (
     EnvelopeError,
     ExternalWait,
     FENCE_MARKER,
+    OPTIONAL_ENVELOPE_FIELDS,
     control_record_reference,
     parse_envelope,
     render_envelope,
@@ -178,3 +179,87 @@ class TestClientNeutrality:
         assert FENCE_MARKER == "double-agent-envelope"
         assert "gov" not in FENCE_MARKER.lower()
         assert not any(ch.isdigit() for ch in FENCE_MARKER)
+
+class TestDeclaredWriteSetIsOptionalAndAdditive:
+    """The one optional field, and every property that makes it safe to add.
+
+    A host enforces write scope from this field. The field's value to that host is obvious;
+    what these tests protect is the part that is easy to break later -- that a dispatch which
+    declares NOTHING is treated exactly as it was before the field existed, in the renderer
+    and in the parser alike.
+    """
+
+    def test_the_required_set_is_still_exactly_seven_and_excludes_this_field(self):
+        assert len(ENVELOPE_FIELDS) == 7
+        assert "declared_write_set" not in ENVELOPE_FIELDS
+        assert OPTIONAL_ENVELOPE_FIELDS == ("declared_write_set",)
+
+    def test_an_undeclared_envelope_renders_no_such_line(self):
+        """The additive property, asserted on the bytes rather than on intent.
+
+        An envelope that declares nothing must produce the block this renderer produced
+        before the field existed -- same lines, same order, nothing appended -- or every
+        brief already in flight is invalidated and a host comparing against the canonical
+        render refuses legitimate dispatches.
+        """
+        rendered = render_envelope(
+            Envelope(
+                assigned_outcome="a working parser",
+                durable_cursor="state/cursor.json",
+                checkpoints=("parsed", "validated"),
+                heartbeat_seconds=120,
+                role_label="[Worker]",
+                control_record="control/",
+            )
+        )
+        assert "declared_write_set" not in rendered
+        assert len(rendered.splitlines()) == 8  # the marker plus the seven required fields
+
+    def test_envelope_text_without_the_field_still_parses(self):
+        envelope = parse_envelope(brief())
+
+        assert envelope.declared_write_set is None
+        assert envelope.declares_write_set is False
+
+    def test_a_declared_set_round_trips_through_render_and_parse(self):
+        original = Envelope(
+            assigned_outcome="a working parser",
+            durable_cursor="state/cursor.json",
+            checkpoints=("parsed", "validated"),
+            heartbeat_seconds=120,
+            role_label="[Worker]",
+            control_record="control/",
+            declared_write_set=("src/one.py", "src/two.py"),
+        )
+
+        recovered = parse_envelope(render_envelope(original))
+
+        assert recovered.declared_write_set == ("src/one.py", "src/two.py")
+        assert recovered.declares_write_set is True
+
+    def test_a_present_but_empty_declaration_is_refused(self):
+        """Refused rather than read as "writes nothing".
+
+        An empty declaration is indistinguishable from one a caller meant to fill in, and it
+        would refuse every write the dispatch makes. Omitting the field is how a dispatch
+        declares nothing.
+        """
+        with pytest.raises(EnvelopeError, match="declares no paths"):
+            parse_envelope(brief(declared_write_set=""))
+
+    def test_a_repeated_path_is_refused(self):
+        with pytest.raises(EnvelopeError, match="repeats a path"):
+            parse_envelope(brief(declared_write_set="src/one.py, src/one.py"))
+
+    def test_checkpoints_are_not_a_write_allowlist(self):
+        """The reading this field exists to make unnecessary, asserted as independence.
+
+        A real dispatch's checkpoints named files it was explicitly forbidden to write, so
+        reading checkpoints as a write allowlist errs permissive on exactly the paths that
+        matter most. An envelope with checkpoints and no declared set declares NOTHING.
+        """
+        envelope = parse_envelope(brief(checkpoints="hooks/a.py, hooks/b.py"))
+
+        assert envelope.checkpoints == ("hooks/a.py", "hooks/b.py")
+        assert envelope.declares_write_set is False
+        assert envelope.declared_write_set is None

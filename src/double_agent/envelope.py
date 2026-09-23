@@ -48,6 +48,7 @@ from typing import Mapping, Optional, Sequence, Tuple
 
 __all__ = [
     "ENVELOPE_FIELDS",
+    "OPTIONAL_ENVELOPE_FIELDS",
     "Envelope",
     "EnvelopeError",
     "ExternalWait",
@@ -69,8 +70,34 @@ ENVELOPE_FIELDS: Tuple[str, ...] = (
     "external_wait",
     "control_record",
 )
-"""Seven. There is no eighth, and the one that was removed is described in this module's
-own documentation rather than left as an absence a reader has to notice."""
+"""The seven REQUIRED fields. A brief missing any of them is refused.
+
+**Corrected 2026-09-21.** This docstring read *"Seven. There is no eighth"* and that is no
+longer true as written: there is now one OPTIONAL field, below. The seven are still exactly
+the required set and nothing has been added to it -- which is the distinction the old wording
+collapsed, and the reason the optional field lives in its own tuple rather than here.
+"""
+
+OPTIONAL_ENVELOPE_FIELDS: Tuple[str, ...] = ("declared_write_set",)
+"""Fields a brief MAY carry. Absent is legal and means the dispatch declares nothing.
+
+**One member, and its optionality is the whole design rather than a convenience.**
+``declared_write_set`` names the paths a dispatch is permitted to write, so a host's
+PreToolUse refusal can be scoped to this dispatch's own mandate instead of to a fixed list
+the host hardcodes. The mandate is otherwise prose in a brief, and prose has failed
+repeatedly: a node told to build through a private index writes the shared checkout anyway.
+
+**Why it is optional and not required.** A refusal that fires on correct work trains its own
+bypass, and in-place writes are legitimate for many dispatches -- so a dispatch that declares
+nothing must keep behaving exactly as it does today. It therefore also renders nothing: an
+``Envelope`` with no declared set produces a block byte-identical to the one this module
+emitted before the field existed, so no brief already in flight is invalidated and no
+previously valid envelope text becomes refusable.
+
+**What it is NOT.** ``checkpoints`` is not a write allowlist and must never be read as one --
+a real dispatch's checkpoints have named files it was explicitly forbidden to write, so that
+reading errs permissive on exactly the paths that matter most.
+"""
 
 CONTROL_RECORD_KINDS: Tuple[str, ...] = ("relay", "adoption", "reach", "abandonment")
 """The four records that resolve under ``control_record``.
@@ -125,6 +152,17 @@ class Envelope:
     role_label: str
     control_record: str
     external_wait: Optional[ExternalWait] = None
+    declared_write_set: Optional[Tuple[str, ...]] = None
+
+    @property
+    def declares_write_set(self) -> bool:
+        """Whether this dispatch scoped its own writes.
+
+        Read by a host that enforces scope. ``False`` means the dispatch declared nothing and
+        must be treated exactly as it was before this field existed -- never as declaring an
+        empty set.
+        """
+        return self.declared_write_set is not None
 
     @property
     def declares_external_wait(self) -> bool:
@@ -163,6 +201,12 @@ def render_envelope(envelope: Envelope) -> str:
         f"external_wait:     {envelope.external_wait.render() if envelope.external_wait else ''}",
         f"control_record:    {envelope.control_record}",
     ]
+    if envelope.declared_write_set is not None:
+        # Appended rather than inserted, so every line above keeps the index it has
+        # always had, and omitted entirely when undeclared, so an undeclared envelope's
+        # block is byte-identical to the one this renderer emitted before the field
+        # existed.
+        lines.append(f"declared_write_set: {', '.join(envelope.declared_write_set)}")
     return "\n".join(lines)
 
 
@@ -201,10 +245,12 @@ def parse_envelope(text: str) -> Envelope:
     for line in _extract_block(text):
         key, _, raw = line.partition(":")
         key = key.strip()
-        if key not in ENVELOPE_FIELDS:
+        if key not in ENVELOPE_FIELDS and key not in OPTIONAL_ENVELOPE_FIELDS:
             raise EnvelopeError(
                 f"unknown envelope field {key!r}. The contract has exactly "
-                f"{len(ENVELOPE_FIELDS)} fields: {list(ENVELOPE_FIELDS)}. In particular there "
+                f"{len(ENVELOPE_FIELDS)} required fields: {list(ENVELOPE_FIELDS)}, and "
+                f"{len(OPTIONAL_ENVELOPE_FIELDS)} optional: {list(OPTIONAL_ENVELOPE_FIELDS)}. "
+                f"In particular there "
                 f"is no field declaring who may send control signals -- entitlement is "
                 f"structural, and a declared identity is the one leg an attacker can dress up."
             )
@@ -247,6 +293,24 @@ def parse_envelope(text: str) -> Envelope:
 
     checkpoints = tuple(c.strip() for c in values["checkpoints"].split(",") if c.strip())
 
+    declared_write_set: Optional[Tuple[str, ...]] = None
+    if "declared_write_set" in values:
+        raw_set = values["declared_write_set"]
+        entries = tuple(e.strip() for e in raw_set.split(",") if e.strip())
+        if not entries:
+            # Refused rather than read as "writes nothing". A present-but-empty declaration is
+            # indistinguishable from one a caller meant to fill in, and this module refuses
+            # rather than defaults for exactly this reason. A dispatch that declares nothing
+            # omits the field.
+            raise EnvelopeError(
+                "declared_write_set is present but declares no paths. Omit the field to "
+                "declare nothing; an empty declaration would refuse every write the dispatch "
+                "makes, which is not distinguishable from a caller that meant to fill it in."
+            )
+        if len(set(entries)) != len(entries):
+            raise EnvelopeError(f"declared_write_set repeats a path: {list(entries)}")
+        declared_write_set = entries
+
     return Envelope(
         assigned_outcome=values["assigned_outcome"],
         durable_cursor=values["durable_cursor"],
@@ -255,4 +319,5 @@ def parse_envelope(text: str) -> Envelope:
         role_label=values["role_label"],
         control_record=values["control_record"],
         external_wait=wait,
+        declared_write_set=declared_write_set,
     )
